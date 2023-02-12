@@ -22,6 +22,16 @@ function rm_file {
   fi
 }
 
+# Function to remove addon from REPO_BINARYADDONS if we are unable to
+# update an addon for any reason.
+# This will require manual intervention to bring into NEW_BRANCH
+function remove_repo_addon {
+  echo "Removing $ADDON_NAME from $REPO_BINARYADDONS $NEW_BRANCH"
+  rm -rf $PWD/repo-binary-addons/$ADDON_NAME
+
+  COMMIT=$( { cd $PWD/repo-binary-addons && git add --all && git commit -m '['${NEW_BRANCH}'] Remove '${ADDON_NAME}' - Manual Branch intervention required' ; } )
+}
+
 REPO_BINARYADDONS=https://github.com/xbmc/repo-binary-addons.git
 
 # Defaults that can be overridden
@@ -85,11 +95,18 @@ unset CHECKOUT
 
 for addon in $PWD/repo-binary-addons/*; do
   if [[ -d "$addon" && ! -L "$addon" ]]; then
+    unset ADDON_SUCCESS
     ADDON_DIR=$addon
     ADDON_NAME=$(basename $ADDON_DIR)
     ADDON_FILE=$ADDON_DIR/$ADDON_NAME.txt
     ADDON_REPO=$(cut -d' ' -f2 $ADDON_FILE)
     ADDON_EXISTING_BRANCH=$(cut -d' ' -f3 $ADDON_FILE)
+
+    if [[ "$ADDON_EXISTING_BRANCH" = "master" ]] ; then
+      echo "$ADDON_NAME uses master branch. Skipping"
+      echo "$ADDON_NAME $ADDON_REPO $ADDON_EXISTING_BRANCH branch used in repo-binary-addons. Review" >> $FAIL_FILE
+      continue
+    fi
 
     # Extract Owner name from ADDON_REPO URL
     # Used for Github API requests - default branch check and set
@@ -117,6 +134,8 @@ for addon in $PWD/repo-binary-addons/*; do
       case $CHECKOUT in
         error:*) echo Failed to checkout $OLD_BRANCH branch. Skipping $ADDON_NAME.
                  echo $ADDON_NAME $ADDON_REPO $CHECKOUT >> $FAIL_FILE
+                 remove_repo_addon
+                 continue
                   ;;
       esac
       unset CHECKOUT
@@ -151,31 +170,38 @@ for addon in $PWD/repo-binary-addons/*; do
         case "$PUSH_BRANCH" in
           *Permission*) echo Failed to push to repo $ADDON_REPO. Permission error. Skipping $ADDON_NAME.
                         echo $ADDON_NAME $ADDON_REPO $PUSH_BRANCH >> $FAIL_FILE
+                        remove_repo_addon
+                        continue
                         ;;
-          *)            ADDON_SUCCESS=true;;
         esac
+
+        ADDON_SUCCESS=true
         unset PUSH_BRANCH
-      fi
 
-      # Set default branch to NEW_BRANCH
-      # Requires a PAT token for Github API requests
-      if [[ ! -z "$PAT_TOKEN" ]] ; then
-        set_default_branch
+        # Set default branch to NEW_BRANCH
+        # Requires a PAT token for Github API requests
+        if [[ ! -z "$PAT_TOKEN" ]] ; then
+          set_default_branch
+        fi
+      else
+        # Dry run doesnt attempt to push to repo. Assume success for testing purposes
+        ADDON_SUCCESS=true
       fi
-
     else
       echo "$NEW_BRANCH already exists for $ADDON_NAME"
       echo $ADDON_NAME $ADDON_REPO $NEW_BRANCH already exists >> $FAIL_FILE
       ADDON_SUCCESS=true
 
-      # Check if default branch for addon is the NEW_BRANCH, update if it isnt
-      # Requires a PAT token for Github API requests
-      if [[ ! -z "$PAT_TOKEN" ]] ; then
-        GH_API_RESPONSE=$( { curl -H "Accept: application/vnd.github+json" -H "Authorization: token $PAT_TOKEN" https://api.github.com/repos/$ADDON_REPO_OWNER/$ADDON_NAME -o $ADDON_GH_JSON_RESPONSE_FILE; } )
-        GH_DEFAULT_BRANCH=$( { grep -o '"default_branch": *"[^"]*"' $ADDON_GH_JSON_RESPONSE_FILE | grep -o '"[^"]*"$' | tr -d '"'; } )
+      if [[ -z "$DRYRUN" ]] ; then
+        # Check if default branch for addon is the NEW_BRANCH, update if it isnt
+        # Requires a PAT token for Github API requests
+        if [[ ! -z "$PAT_TOKEN" ]] ; then
+          GH_API_RESPONSE=$( { curl -H "Accept: application/vnd.github+json" -H "Authorization: token $PAT_TOKEN" https://api.github.com/repos/$ADDON_REPO_OWNER/$ADDON_NAME -o $ADDON_GH_JSON_RESPONSE_FILE; } )
+          GH_DEFAULT_BRANCH=$( { grep -o '"default_branch": *"[^"]*"' $ADDON_GH_JSON_RESPONSE_FILE | grep -o '"[^"]*"$' | tr -d '"'; } )
 
-        if [[ "$NEW_BRANCH" != "$GH_DEFAULT_BRANCH" ]] ; then     
-          set_default_branch
+          if [[ "$NEW_BRANCH" != "$GH_DEFAULT_BRANCH" ]] ; then     
+            set_default_branch
+          fi
         fi
       fi
     fi
@@ -205,30 +231,21 @@ for addon in $PWD/repo-binary-addons/*; do
       # sed -i '', so just use -ie and remove backup file created before commit
       rm_file $ADDON_FILE_BACKUP
 
-      # Todo: This adds a single commit for each addon
-      # Do we want to do all addon branch bumps in a single commit?
-      # If so, remove from for loop and add at the end of file
-      if [[ -z "$DRYRUN" ]] ; then
-        # Not sure if we need to safety check commit
-        COMMIT=$( { cd $PWD/repo-binary-addons && git add --all && git commit -m '['${NEW_BRANCH}'] '${ADDON_NAME}' change branch to '${NEW_BRANCH} ; } )
+      # Not sure if we need to safety check commit
+      COMMIT=$( { cd $PWD/repo-binary-addons && git add --all && git commit -m '['${NEW_BRANCH}'] '${ADDON_NAME}' change branch to '${NEW_BRANCH} ; } )
 
-# ToDo: this does push to repo-binary-addons. uncomment when ready to pull the trigger
-#        PUSH_BRANCH=$( { cd $PWD/repo-binary-addons && git push origin $OLD_BRANCH:$NEW_BRANCH ; } 2>&1 >/dev/null )
-
-#        case "$PUSH_BRANCH" in
-#          *Permission*) echo Failed to push to repo $REPO_BINARYADDONS. Permission error.
-#                        ;;
-#        esac
-#        unset PUSH_BRANCH
-
-      fi
+    else
+      echo "Removing $ADDON_DIR. Not able to update for $NEW_BRANCH"
+      remove_repo_addon
     fi
-
-    unset ADDON_SUCCESS
-
-    # Todo: remove this when ready to go ham on all addons.
-    # exist after first addon
-    exit 0
   fi
-
 done
+
+if [[ -z "$DRYRUN" ]] ; then
+  PUSH_BRANCH=$( { cd $PWD/repo-binary-addons && git push origin $OLD_BRANCH:$NEW_BRANCH ; } 2>&1 >/dev/null )
+
+  case "$PUSH_BRANCH" in
+    *Permission*) echo Failed to push to repo $REPO_BINARYADDONS. Permission error.
+                  ;;
+  esac
+fi
