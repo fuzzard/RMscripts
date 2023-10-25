@@ -3,14 +3,14 @@ setlocal
 REM Arguments
 REM
 REM RelType     - If not provided, will be set to empty 
-REM               empty is considered Final, and if Final is provided, the variable is set to empty
+REM               empty is considered Final, and if Final is provided, the variable is set to empty (RelType=Beta1)
 REM 
 REM APPNAME     - default is kodi
-REM APPVERSION  = default is 20.0
-REM CODENAME    - default is Nexus
+REM APPVERSION  = default is 21.0
+REM CODENAME    - default is Omega
 REM Testbuild   = Whether we download from Testbuild folder on mirrors
 REM               default is no and will download from Release folder
-REM Clean       - whether we clean (rmdir) the workdir
+REM Clean       - whether we clean (rmdir) the workdir (/Clean=True)
 REM
 REM Parameters
 REM
@@ -18,7 +18,7 @@ REM workdir     - Directory to create folder structure
 REM               if no path supplied, current location of the script is used as base
 REM
 REM Example run script
-REM             Release-automation.bar /RelType=RC1 /Testbuild=ON c:\Test\RC3
+REM             Release-automation.bar /RelType=RC1 /Clean=True /Testbuild=ON c:\Test\RC3
 
 
 REM Paramater and Named arg parsing from https://stackoverflow.com/a/58344976
@@ -55,11 +55,12 @@ IF NOT EXIST %workdir%\store_submission md %workdir%\store_submission
 IF NOT EXIST %workdir%\artifact md %workdir%\artifact
 
 if "%ARG_APPNAME%" == "" SET "ARG_APPNAME=kodi"
-if "%ARG_APPVERSION%" == "" SET "ARG_APPVERSION=20.0"
-if "%ARG_CODENAME%" == "" SET "ARG_CODENAME=Nexus"
+if "%ARG_APPVERSION%" == "" SET "ARG_APPVERSION=21.0"
+if "%ARG_CODENAME%" == "" SET "ARG_CODENAME=Omega"
 if "%ARG_UWP_ARCH%" == "" SET "ARG_UWP_ARCH=x64"
 if "%ARG_BRIDGE_ARCH%" == "" SET "ARG_BRIDGE_ARCH=x86_x64"
 if "%ARG_BUNDLE_EXTENSION%" == "" SET "ARG_BUNDLE_EXTENSION=appxbundle"
+if NOT "%ARG_RelType%" == "" SET "ARG_ReleaseType=_%ARG_RelType%"
 
 SET "uwpmisxname=%ARG_APPNAME%-%ARG_APPVERSION%-%ARG_CODENAME%_%ARG_APPVERSION%.0.0%ARG_ReleaseType%-%ARG_UWP_ARCH%"
 SET "uwpbundlename=%ARG_APPNAME%-%ARG_APPVERSION%-%ARG_CODENAME%%ARG_ReleaseType%_%ARG_UWP_ARCH%"
@@ -69,19 +70,12 @@ SET "bridgebundlename=%ARG_APPNAME%-%ARG_APPVERSION%-%ARG_CODENAME%%ARG_ReleaseT
 if defined ARG_Testbuild (SET "MIRROR_URL=http://mirrors.kodi.tv/test-builds/windows") else (SET "MIRROR_URL=http://mirrors.kodi.tv/releases/windows")
 if defined ARG_Testbuild (SET "UWPMirrorFolder=uwp64") else (SET "UWPMirrorFolder=UWP")
 
-REM goto patch_bridge_version
-REM goto install_bridge
-
 :download_UWP
-
-REM goto package_UWP
 
 REM Download UWP msix and appxsym 
 bitsadmin.exe /transfer "Download UWP %ARG_UWP_ARCH% msix" /download /priority FOREGROUND %MIRROR_URL%/%UWPMirrorFolder%/%uwpmisxname%.msix %workdir%\bundle-uwp\%uwpbundlename%.msix
 REM We cant have the appxsym in the bundle folder. save to output ready for zip with appxbundle
 bitsadmin.exe /transfer "Download UWP %ARG_UWP_ARCH% appxsym" /download /priority FOREGROUND %MIRROR_URL%/%UWPMirrorFolder%/%uwpmisxname%.appxsym %workdir%\output-uwp\%uwpbundlename%.appxsym
-
-REM goto end
 
 :package_UWP
 
@@ -143,8 +137,6 @@ SET dl_arch=x64
 makeappx pack /d %workdir_stripped%\install-bridge\%dl_arch% /p %workdir%\bundle-bridge\%bridgeexename%-%dl_arch%.appx
 
 makeappx bundle /d %workdir%\bundle-bridge /p %workdir%\output-bridge\%bridgebundlename%.appxbundle
-
-rem goto end
 
 :package_syms
 
