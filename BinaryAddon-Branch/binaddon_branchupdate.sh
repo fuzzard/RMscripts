@@ -35,9 +35,13 @@ function remove_repo_addon {
 REPO_BINARYADDONS=https://github.com/xbmc/repo-binary-addons.git
 
 # Defaults that can be overridden
-OLD_BRANCH=Nexus
-NEW_BRANCH=Omega
-VERSION=21.0.0
+OLD_BRANCH=Omega
+NEW_BRANCH=Piers
+VERSION=22.0.0
+
+# Azure Pipelines yml has OLD_BRANCH and OLD_BRANCH-1
+# Manually hardcode the previous N-1 branch for now
+AZURE_PIPELINE_REMOVE_BRANCH=Nexus
 
 # Temp files
 FAIL_FILE=$PWD/failed_repo.txt
@@ -46,8 +50,8 @@ ADDON_GH_JSON_RESPONSE_FILE=$PWD/gh_response.json
 
 # Backup previous fail just in case need to review output
 if [ -f $PWD/failed_repo.txt ]; then
-  mv $PWD/failed_repo.txt $PWD/failed_repo.txt.old
   rm -f $PWD/failed_repo.txt.old
+  mv $PWD/failed_repo.txt $PWD/failed_repo.txt.old
 fi
 
 while getopts :hcdv:o:n:t: flag
@@ -161,8 +165,28 @@ for addon in $PWD/repo-binary-addons/*; do
       sed -ie "s|${ADDON_EXISTING_BRANCH}|${NEW_BRANCH}|g" $JENKINS_FILE
       rm_file $JENKINS_FILE_BACKUP
 
+      ## azure-pipelines.yml Update Commit
+      AZUREPIPELINE_FILE=$PWD/$ADDON_NAME/azure-pipelines.yml
+      AZUREPIPELINE_FILE_BACKUP=$PWD/$ADDON_NAME/azure-pipelines.ymle
+
+      # Macos cant deal with sed -i. was unable to get a sed_cmd variable to work with
+      # sed -i '', so just use -ie and remove backup file created before commit
+      sed -ie "s|- ${AZURE_PIPELINE_REMOVE_BRANCH}|- ${NEW_BRANCH}|g" $AZUREPIPELINE_FILE
+      rm_file $AZUREPIPELINE_FILE_BACKUP
+
+      ## azure-pipelines.yml Update Commit
+      # If an addon changes the default xbmc branch (eg to a Named branch rather than master)
+      # we revert back to master for latest
+      GITHUB_BUILD_FILE=$PWD/$ADDON_NAME/.github/workflows/build.yml
+      GITHUB_BUILD_FILE_BACKUP=$PWD/$ADDON_NAME/.github/workflows/build.ymle
+
+      # Macos cant deal with sed -i. was unable to get a sed_cmd variable to work with
+      # sed -i '', so just use -ie and remove backup file created before commit
+      sed -ie "s|ref: ${ADDON_EXISTING_BRANCH}|ref: master|g" $GITHUB_BUILD_FILE
+      rm_file $GITHUB_BUILD_FILE_BACKUP
+
       # Not sure if we need to safety check commit
-      COMMIT=$( { cd $PWD/$ADDON_NAME && git add --all && git commit -m '['${NEW_BRANCH}'] Jenkinsfile branch update to '${NEW_BRANCH} ; } )
+      COMMIT=$( { cd $PWD/$ADDON_NAME && git add --all && git commit -m '['${NEW_BRANCH}'] CI files branch update to '${NEW_BRANCH} ; } )
 
       if [[ -z "$DRYRUN" ]] ; then
         PUSH_BRANCH=$( { cd $PWD/$ADDON_NAME && git push origin $OLD_BRANCH:$NEW_BRANCH ; } 2>&1 >/dev/null )
